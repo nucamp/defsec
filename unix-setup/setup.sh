@@ -288,106 +288,7 @@ handle_apparmor_arch() {
         log_success "AppArmor is enabled and working"
         return 0
     fi
-
-fi
-
-sleep 10
-
-cat << EOF
-
-Next, I will check you already have multipass machines running on your
-computer. This will help avoid potential naming conflicts.
-
-EOF
-
-sleep 10
-
-# Get running instances
-current_count=$(multipass list --format json | jq -r '.list.[].name' | wc -l)
-current_names=$(multipass list --format json | jq -r '.list.[].name')
-
-if [ $current_count -gt 0 ]; then
-	echo -e "Hey look, I found some!\n"
-fi
-
-declare -a new_machines=("nucamp-ubuntu-machine-1" "nucamp-ubuntu-machine-2")
-
-cat << EOF
-
-Ok, now that I know that you have machines already running, I will check for
-naming conflicts. Our machines will be called:
-
-- nucamp-ubuntu-machine-1
-- nucamp-ubuntu-machine-2
-
-Just FYI, if I find naming conflicts I will exit out...
-
-EOF
-
-sleep 10
-
-#check for existing machine and exit on name conflicts
-for name in "${new_machines[@]}";
-do
-	for x in $current_names;
-	do
-		if [ "$name" == "$x" ]; then
-			echo -e "\n[!] Found name conflict. Machine already exists with name $name"
-cat << EOF
-
-You may be wondering what to do now that I have found conflicts. Well, if you
-still need the machine with the conflicting name ($name), you can rename the
-machine with the following command:
-
-
-multipass clone $name --name <your new name here>
-
-
-Then, you can delete and purge the old machine with:
-
-
-multipass delete $name && multipass purge
-
-EOF
-			exit 1
-		fi
-	done
-done
-
-cat << EOF
-
-Ok, so good news; I did not find any name conflicts we we are good
-to go ahead and create the machines without an issue
-
-EOF
-
-#Create new instance with features
-for name in "${new_machines[@]}";
-do
-	multipass launch --cpus 2 --memory 2G --name "$name" 24.04 --disk 20GB < /dev/null
-
-	if [ $? -ne 0 ]; then
-		echo "ruh roh! Something is all screwy and I could not create the machines!"
-		exit 1
-	fi
-done
-
-cat << EOF
-
-Ok! That worked! Now I will do some basic health checks and configuration to be
-sure everything will work as expected.
-
-EOF
-
-# Network health checks
-
-cat << EOF
-
-First up, I need to make sure that VM has access to the internet, this is
-required in order to update the vm and install software packages. The command
-I will run is:
-
-multipass exec <vm name> ping -c 3 1.1.1.1
+}
 
 # System detection
 detect_os() {
@@ -769,13 +670,29 @@ create_vms() {
 
 test_vm_connectivity() {
     log_step "Testing VM network connectivity..."
-    
+
     for vm_name in "${VM_NAMES[@]}"; do
         log_info "Testing connectivity for: $vm_name"
-        
-        if multipass exec "$vm_name" -- ping -c 3 1.1.1.1 >/dev/null 2>&1; then
-            log_success "Network connectivity OK for: $vm_name"
-        else
+
+        # Give the VM extra time to fully initialize
+        sleep 10
+
+        # Test connectivity with retries
+        local max_attempts=5
+        local attempt=0
+
+        while [ $attempt -lt $max_attempts ]; do
+            if multipass exec "$vm_name" -- ping -c 1 -W 5 1.1.1.1 >/dev/null 2>&1; then
+                log_success "Network connectivity OK for: $vm_name"
+                break
+            else
+                log_info "Waiting for network connectivity... (attempt $((attempt + 1))/$max_attempts)"
+                sleep 5
+                ((attempt++))
+            fi
+        done
+
+        if [ $attempt -eq $max_attempts ]; then
             error_exit "Network connectivity test failed for VM: $vm_name"
         fi
     done
